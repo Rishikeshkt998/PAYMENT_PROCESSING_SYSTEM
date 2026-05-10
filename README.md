@@ -238,4 +238,11 @@ export default class ProcessPaymentUseCase {
 | `RATE_LIMIT_EXCLUDED_PATHS` | Comma-separated paths to ignore rate limit | `/health` |
 
 ---
+
+## 📡 Interactive API Documentation (Swagger UI)
+You can test the entire API lifecycle through the interactive documentation:
+- **URL**: [http://localhost:3000/api-docs](http://localhost:3000/api-docs)
+- **Features**: Supports Bearer Token Auth and real-time status checks.
+
+---
 *Manual Generated for: Rishikeshkt998/PAYMENT_PROCESSING_SYSTEM*

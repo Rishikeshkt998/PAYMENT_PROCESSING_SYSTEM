@@ -10,12 +10,15 @@ const rateLimitExcluded = parseEnvPaths(process.env.RATE_LIMIT_EXCLUDED_PATHS);
 const authExcluded = parseEnvPaths(process.env.AUTH_EXCLUDED_PATHS);
 
 export const isRateLimitExcluded = (path: string): boolean => {
-  return rateLimitExcluded.some((excluded) => path.includes(excluded));
+  // Always exclude health and api-docs from rate limiting
+  const defaults = ['/health', '/api-docs'];
+  const allExcluded = [...new Set([...rateLimitExcluded, ...defaults])];
+  return allExcluded.some((excluded) => path.includes(excluded));
 };
 
 export const isAuthExcluded = (path: string): boolean => {
-  // Always exclude health, login, and webhooks by default
-  const defaults = ['/health', '/webhooks/gateway', '/auth/generate-token'];
+  // Always exclude health, login, webhooks, and api-docs by default
+  const defaults = ['/health', '/webhooks/gateway', '/auth/generate-token', '/api-docs'];
   const allExcluded = [...new Set([...authExcluded, ...defaults])];
   return allExcluded.some((excluded) => path.includes(excluded));
 };

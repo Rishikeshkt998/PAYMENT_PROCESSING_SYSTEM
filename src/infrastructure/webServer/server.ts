@@ -8,6 +8,8 @@ import { isRateLimitExcluded, isAuthExcluded } from '../config/excludedPaths';
 import handleErrors from './middlewares/ErrorHandler';
 import { AuthMiddleware } from './middlewares/AuthMiddleware';
 import logger from '../logging/AppLogger';
+import swaggerUi from 'swagger-ui-express';
+import swaggerDocument from '../../../swagger.json';
 import { MongoConnection } from '../database/MongoConnection';
 import redisClient from '../cache/RedisService';
 
@@ -75,6 +77,7 @@ const createServer = async (): Promise<Application> => {
   app.use('/payments', paymentRoutes);
   app.use('/webhooks', webhookRoutes);
   app.use('/auth', authRoutes);
+  app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument));
 
   // 404 fallback
   app.use((_req: Request, res: Response) => {

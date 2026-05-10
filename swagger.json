@@ -1,0 +1,118 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Payment Processing System API",
+    "version": "1.0.0",
+    "description": "Enterprise-ready payment gateway with Rate Limiting, JWT Auth, and Idempotency Control."
+  },
+  "servers": [
+    {
+      "url": "http://localhost:3000",
+      "description": "Development server"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    }
+  },
+  "paths": {
+    "/auth/generate-token": {
+      "post": {
+        "tags": ["Authentication"],
+        "summary": "Generate a JWT access token",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "email": { "type": "string", "example": "admin@example.com" },
+                  "password": { "type": "string", "example": "admin123" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Token generated successfully" }
+        }
+      }
+    },
+    "/payments": {
+      "post": {
+        "tags": ["Payments"],
+        "summary": "Initiate a new payment",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "amount": { "type": "number", "example": 100 },
+                  "currency": { "type": "string", "example": "USD" },
+                  "idempotencyKey": { "type": "string", "example": "unique_tx_123" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "Payment initiated" }
+        }
+      }
+    },
+    "/payments/{id}": {
+      "get": {
+        "tags": ["Payments"],
+        "summary": "Get payment status",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Success" }
+        }
+      }
+    },
+    "/webhooks/gateway": {
+      "post": {
+        "tags": ["External"],
+        "summary": "Process gateway webhook",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "externalId": { "type": "string" },
+                  "status": { "type": "string", "enum": ["SUCCESS", "FAILED"] }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Processed" }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "tags": ["System"],
+        "summary": "Check API health",
+        "responses": {
+          "200": { "description": "System is UP" }
+        }
+      }
+    }
+  }
+}
