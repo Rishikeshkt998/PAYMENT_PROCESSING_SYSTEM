@@ -4,142 +4,82 @@ A robust, enterprise-ready payment processing backend built with **Clean Archite
 
 ---
 
-## 🏗️ Architecture & Design Patterns
-
-This project follows **Clean Architecture** (Dependency Inversion), ensuring that the business logic (Use Cases) is completely decoupled from the infrastructure (Databases, Gateways, Frameworks).
-
--   **Presentation Layer**: Express.js Controllers handling HTTP requests/responses.
--   **Application Layer**: Use Cases containing the core business logic.
--   **Domain Layer**: Entities and Repository Interfaces.
--   **Infrastructure Layer**: Mongoose Models, Redis Cache, BullMQ Workers, and Gateway Simulators.
-
-### Key Resilience Patterns
--   **Idempotency**: Every payment request is guarded by an `idempotencyKey`. This ensures that even if a network retry or a double-click occurs, the customer is only charged once.
--   **Distributed Locking**: Uses **Redis** to implement mutex locks. This prevents "Race Conditions" where multiple workers might try to process the same payment status update simultaneously.
--   **State Machine Protection**: Strict transitions (e.g., a payment cannot move from `SUCCESS` to `FAILED`) are enforced at the Use Case level.
--   **Asynchronous Processing**: High-latency gateway calls are handled in the background, allowing the API to remain highly responsive.
+## 🌍 Real-World Business Scenarios
+This system is designed to solve critical financial problems:
+- **Idempotency**: Prevents double-charging users if they double-click the pay button.
+- **Asynchronous Flow**: Keeps the user experience fast while bank processing happens in the background.
+- **Webhooks**: Handles delayed payment confirmations from banks.
+- **Distributed Locking**: Prevents race conditions during simultaneous status updates.
 
 ---
 
-## 🚀 Features
-
--   ✅ **Distributed Rate Limiting**: Shared across multiple server instances using Redis.
--   ✅ **Excluded Paths**: Support for bypassing rate limits on specific routes (e.g., `/health`, `/docs`).
--   ✅ **Automatic Retries**: Exponential backoff strategy using **BullMQ** for failed gateway transactions.
--   ✅ **Webhook Security**: Handles asynchronous updates from external providers with concurrency protection.
--   ✅ **Structured Logging**: Production-ready logging using **Winston**.
+## 🚀 Key Features
+- ✅ **Global JWT Authentication**: Secure APIs using standardized Bearer tokens.
+- ✅ **Distributed Rate Limiting**: Shared across multiple server instances using Redis with unique fingerprinting.
+- ✅ **Centralized Security**: Handled at the infrastructure level with path-based exclusions.
+- ✅ **Idempotency Control**: Guarantees that a transaction is only processed once.
+- ✅ **Fail-Open Strategy**: High availability for Rate Limiting even if Redis is unreachable.
+- ✅ **Structured Logging**: Production-ready logging using **Winston**.
 
 ---
 
 ## 🛠️ Tech Stack
-
--   **Runtime**: Node.js with TypeScript
--   **Framework**: Express.js
--   **Database**: MongoDB (Mongoose)
--   **Cache/Message Broker**: Redis (ioredis)
--   **Task Queue**: BullMQ
--   **Validation**: Zod (Schema validation)
--   **Testing**: Jest & Supertest
-
----
-
-## 📂 Project Structure
-
-```text
-src/
-├── controllers/            # HTTP Entry points
-├── domain/
-│   ├── dtos/               # Data Transfer Objects (Strict typing)
-│   ├── entities/           # Business models
-│   └── repositories/       # Interface definitions
-├── infrastructure/
-│   ├── cache/              # Redis & Locking services
-│   ├── config/             # App configuration (Excluded paths, etc.)
-│   ├── database/           # MongoDB Connection & Models
-│   ├── ioc/                # Awilix Dependency Injection Registry
-│   ├── logging/            # Winston Logger setup
-│   ├── routes/             # Express Route definitions
-│   └── webServer/          # Express App & Middlewares
-├── repositories/           # Concrete Repository implementations
-└── useCases/               # Core business logic (Process, Retry, etc.)
-tests/                      # Mirror of src/ for Unit & Integration tests
-```
+- **Runtime**: Node.js with TypeScript
+- **Framework**: Express.js
+- **Database**: MongoDB (Mongoose)
+- **Cache/Locking**: Redis (ioredis)
+- **Validation**: Yup
+- **DI Container**: Awilix (Registry Pattern)
+- **Authentication**: JsonWebToken (JWT)
 
 ---
 
-## ⚙️ Getting Started
+## ⚙️ Quick Start
 
-### 1. Prerequisites
--   Node.js (v18+)
--   MongoDB
--   Redis
-
-### 2. Installation
+### 1. Installation
 ```bash
 npm install
 ```
 
-### 3. Environment Setup
-Create a `.env` file in the root:
+### 2. Environment Setup
+Create a `.env` file:
 ```env
 PORT=3000
-MONGO_URI=mongodb://localhost:27017/payment_processing
-REDIS_URL=redis://localhost:6379
+MONGO_URI=your_mongo_uri
+REDIS_URL=your_redis_url
+JWT_SECRET=your_secret_key
 RATE_LIMIT_EXCLUDED_PATHS=/health,/api/docs
 ```
 
-### 4. Running the App
+### 3. Running the App
 ```bash
 # Development mode
 npm run dev
-
-# Production build
-npm run build
-npm start
 ```
 
 ---
 
-## 📡 API Documentation
+## 📡 API Reference (Simplified)
 
-### 1. Initiate Payment
-`POST /payments`
-**Request Body:**
-```json
-{
-  "amount": 2500,
-  "currency": "USD",
-  "idempotencyKey": "order_unique_999"
-}
-```
-**Response:** `201 Created`
+### 1. Generate Token
+`POST /auth/generate-token`
+- Payload: `{"email": "admin@example.com", "password": "admin123"}`
 
-### 2. Check Status
-`GET /payments/:id`
+### 2. Initiate Payment
+`POST /payments` (Auth Required)
+- Payload: `{"amount": 500, "currency": "USD", "idempotencyKey": "unique_1"}`
 
-### 3. Handle External Webhook
-`POST /webhooks/gateway`
-**Request Body:**
-```json
-{
-  "externalId": "txn_83742",
-  "status": "SUCCESS",
-  "message": "Payment verified by bank"
-}
-```
+### 3. Check Status
+`GET /payments/:id` (Auth Required)
+
+### 4. Handle External Webhook
+`POST /webhooks/gateway` (Public)
 
 ---
 
-## 🧪 Testing
+## 📖 Detailed Documentation
+For a complete, line-by-line technical walkthrough of every file and implementation detail, please refer to:
+### 👉 [DOCUMENTATION.md](./DOCUMENTATION.md)
 
-### Automated Tests
-Run the full suite of logic and concurrency tests:
-```bash
-npm test
-```
-
-### Manual Rate Limit Test
-1. Set `limit: 5` in `src/infrastructure/webServer/middlewares/rateLimiter.ts`.
-2. Spam `GET /payments`.
-3. You will be blocked with a `429` error.
-4. Visit `GET /health` — it will still work because it is in the `EXCLUDED_PATHS`.
+---
+*Status: Production Ready & Documented.*
