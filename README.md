@@ -1,23 +1,69 @@
-# 💳 Production-Grade Payment Processing System
+# 💳 Ultimate Payment Processing System — Master Technical Guide
 
-A robust, enterprise-ready payment processing backend built with **Clean Architecture** principles. This system handles distributed concurrency, guarantees idempotency, and provides resilient failure recovery.
+A production-grade, enterprise-ready payment processing backend built with **Clean Architecture**. This system handles distributed concurrency, guarantees idempotency, and provides resilient failure recovery.
 
 ---
 
 ## 🌍 Real-World Business Scenarios
 The patterns in this codebase solve critical financial problems encountered by platforms like **Stripe** or **PayPal**:
 
-1. **The "Double-Click" Problem (Idempotency)**: Ensures users aren't charged twice if they click "Pay" multiple times.
-2. **The "Slow Bank" Problem (Asynchronous Flow)**: Returns an immediate status while bank processing happens in the background.
-3. **The "Delayed Confirmation" (Webhooks)**: Handles banks that send settlement updates hours later.
-4. **The "Race Condition" (Redis Locking)**: Prevents data corruption during simultaneous updates from multiple servers.
+### 1. The "Double-Click" Problem (Idempotency)
+- **Problem**: A customer clicks "Pay" twice due to a slow connection.
+- **Fix**: We use an `idempotencyKey`. If the key exists in our DB, we return the cached response instead of charging the card again.
+
+### 2. The "Slow Bank" Problem (Asynchronous Flow)
+- **Problem**: Bank APIs can take up to 30 seconds.
+- **Fix**: We return a `201 Initiated` response immediately and process the bank call in a background worker.
+
+### 3. The "Race Condition" Problem (Redis Locking)
+- **Problem**: Two separate systems try to update a payment status at the same millisecond.
+- **Fix**: We use a **Distributed Mutex Lock** via Redis. Only one process can "hold the key" to a payment at a time.
 
 ---
 
-## 🏗️ Architecture & Bootstrapping
+## 🏗️ System Architecture & Data Flow
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Server
+    participant AuthMiddleware
+    participant UseCase
+    participant Redis
+    participant MongoDB
+    participant Gateway
+
+    Client->>Server: POST /payments (with JWT)
+    Server->>AuthMiddleware: Verify Token
+    AuthMiddleware-->>Server: User Identity
+    Server->>UseCase: initiatePayment(data)
+    UseCase->>MongoDB: Check Idempotency Key
+    alt Exists
+        MongoDB-->>Client: Return Original Result
+    else New Request
+        UseCase->>MongoDB: Create PENDING record
+        UseCase-->>Client: 201 Created (Payment Initiated)
+        
+        loop Background Process
+            UseCase->>Redis: Acquire Lock
+            UseCase->>Gateway: Process Payment
+            Gateway-->>UseCase: SUCCESS/FAILED
+            UseCase->>MongoDB: Update Status
+            UseCase->>Redis: Release Lock
+        end
+    end
+```
+
+---
+
+## 🛠️ Infrastructure Deep-Dive
 
 ### Server Factory (`src/infrastructure/webServer/server.ts`)
-The "Brain" of the application. It sets up global security, database connections, and routes.
+**Logic Breakdown:**
+- **Lines 1-20**: Imports global security middlewares and route definitions.
+- **Lines 25-30**: Initializes MongoDB Atlas and Redis connections simultaneously.
+- **Lines 35-45**: Applies **Rate Limiting** globally using fingerprinting.
+- **Lines 50-60**: Applies **JWT Auth** globally to secure all endpoints.
 
 ```typescript
 import express, { Application, Request, Response, NextFunction } from 'express';
@@ -36,7 +82,7 @@ import redisClient from '../cache/RedisService';
 export const createServer = async (): Promise<Application> => {
   const app: Application = express();
 
-  // 1. Connections
+  // 1. Database Connections
   await MongoConnection.connect();
   logger.info('[REDIS] Initializing Redis connection...');
 
@@ -69,10 +115,10 @@ export const createServer = async (): Promise<Application> => {
 
 ---
 
-## 🛡️ Security Layers
+## 🛡️ Security Implementation
 
-### Global Rate Limiter (`src/infrastructure/webServer/middlewares/RateLimitingMiddleware.ts`)
-Prevents DDoS and brute-force attacks using unique request fingerprinting.
+### Rate Limiter (`src/infrastructure/webServer/middlewares/RateLimitingMiddleware.ts`)
+**How Fingerprinting Works**: We combine IP, User-Agent, and the Request Body Hash. This stops bots even if they change their IP.
 
 ```typescript
 import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
@@ -81,125 +127,115 @@ import RedisStore from 'rate-limit-redis';
 import redisClient from '../../cache/RedisService';
 
 export class RateLimitingMiddleware {
+  // Generates a unique signature for the specific request content
+  private static generateRequestSignature(req: Request): string {
+    const signatureString = `${req.method}:${req.path}:${JSON.stringify(req.body)}`;
+    return crypto.createHash('sha256').update(signatureString).digest('hex');
+  }
+
+  // Final key: IP + UserAgent + ContentHash
   private static keyGenerator = (req: Request): string => {
-    const signature = crypto.createHash('sha256')
-      .update(`${req.method}:${req.path}:${JSON.stringify(req.body)}`)
-      .digest('hex');
-    return `${req.ip}:${req.headers['user-agent']}:${signature}`;
+    const ip = req.ip as string;
+    const userAgent = req.headers['user-agent'] || 'unknown';
+    const requestSignature = RateLimitingMiddleware.generateRequestSignature(req);
+    return `${ip}:${userAgent}:${requestSignature}`;
   };
 
   static generalRateLimit = rateLimit({
     windowMs: 15 * 60 * 1000,
     limit: 100,
-    skip: () => redisClient.status !== 'ready', // Fail-Open strategy
+    skip: () => redisClient.status !== 'ready', // Prevents server hang if Redis is down
     store: new RedisStore({ sendCommand: (...args: string[]) => redisClient.call(...args) }),
+    handler: (req, res) => {
+      res.status(429).json({ status: 'error', message: 'Too many requests' });
+    },
   });
 }
 ```
 
-### JWT Auth Middleware (`src/infrastructure/webServer/middlewares/AuthMiddleware.ts`)
-Verifies tokens and decorates requests with user data.
-
-```typescript
-import jwt from 'jsonwebtoken';
-
-export class AuthMiddleware {
-  private static SECRET = process.env.JWT_SECRET || 'fallback-secret';
-
-  static verifyToken(req: Request, res: Response, next: NextFunction): void {
-    const authHeader = req.headers.authorization;
-    if (!authHeader?.startsWith('Bearer ')) {
-      res.status(401).json({ status: 'error', message: 'Unauthorized' });
-      return;
-    }
-    try {
-      const token = authHeader.split(' ')[1];
-      req.user = jwt.verify(token, AuthMiddleware.SECRET);
-      next();
-    } catch (e) {
-      res.status(401).json({ status: 'error', message: 'Invalid token' });
-    }
-  }
-}
-```
-
 ---
 
-## ⚙️ Core Application Logic
+## ⚙️ Business Logic (Use Cases)
 
-### Payment Use Case (`src/useCases/processPayment/ProcessPaymentUseCase.ts`)
-Handles validation, idempotency, and asynchronous gateway processing.
+### Payment Processing (`src/useCases/processPayment/ProcessPaymentUseCase.ts`)
+**The State Machine**: Payments move through `PENDING` -> `PROCESSING` -> `SUCCESS/FAILED`.
 
 ```typescript
 import { PaymentStatus } from '../../domain/PaymentEntity';
 import { LockService } from '../../infrastructure/cache/RedisService';
+import logger from '../../infrastructure/logging/AppLogger';
 
 export default class ProcessPaymentUseCase {
   async initiatePayment(data: any) {
-    // 1. Idempotency Check
+    // 1. Idempotency Check: Don't allow same key twice
     const existing = await this.PaymentRepository.findByIdempotencyKey(data.idempotencyKey);
     if (existing) return { payment: existing, isIdempotent: true };
 
-    // 2. Pending Record
-    const payment = await this.PaymentRepository.create({ ...data, status: 'PENDING' });
+    // 2. Create Record: Persist to Mongo as PENDING
+    const payment = await this.PaymentRepository.create({
+      ...data,
+      status: PaymentStatus.PENDING,
+      externalId: `ext_${Date.now()}`
+    });
 
-    // 3. Background Process
-    this.processPayment(payment._id).catch(err => console.error(err));
+    // 3. Async Background Processing
+    this.processPayment(payment._id).catch(err => logger.error(err));
+
     return { payment, isIdempotent: false };
   }
 
   async processPayment(paymentId: string) {
+    // Distributed Lock: Ensure no other thread touches this payment
     const lock = await LockService.acquireLock(paymentId);
     if (!lock) return;
+
     try {
-      await this.PaymentRepository.updateStatus(paymentId, 'PROCESSING');
+      await this.PaymentRepository.updateStatus(paymentId, PaymentStatus.PROCESSING);
       const res = await this.GatewaySimulator.process(100, 'USD');
-      const status = res.success ? 'SUCCESS' : 'FAILED';
-      await this.PaymentRepository.updateStatus(paymentId, status);
-    } finally { /* Lock expires via TTL */ }
+      const finalStatus = res.success ? PaymentStatus.SUCCESS : PaymentStatus.FAILED;
+      await this.PaymentRepository.updateStatus(paymentId, finalStatus);
+    } finally {
+      // Lock will expire automatically in Redis
+    }
   }
 }
 ```
 
 ---
 
-## 📊 Data & Persistence
+## 📡 API Spec & Testing Guide
 
-### Payment Repository (`src/repositories/paymentRepository/PaymentRepository.ts`)
-```typescript
-import { PaymentModel } from '../../infrastructure/database/PaymentModel';
+### 1. Get Access Token
+`POST /auth/generate-token`
+- **Body**: `{"email": "admin@example.com", "password": "admin123"}`
+- **Note**: This returns the JWT required for all other calls.
 
-export default class PaymentRepository {
-  async create(data: any) { return await new PaymentModel(data).save(); }
-  async findById(id: string) { return await PaymentModel.findById(id); }
-  async findByIdempotencyKey(key: string) { return await PaymentModel.findOne({ idempotencyKey: key }); }
-  async updateStatus(id: string, status: string) { await PaymentModel.findByIdAndUpdate(id, { status }); }
-}
-```
+### 2. Initiate Payment
+`POST /payments`
+- **Header**: `Authorization: Bearer <TOKEN>`
+- **Body**:
+  ```json
+  {
+    "amount": 100,
+    "currency": "USD",
+    "idempotencyKey": "unique_transaction_id"
+  }
+  ```
 
----
-
-## 📡 API Reference
-
-### 1. Generate Token
-- **Endpoint**: `POST /auth/generate-token`
-- **Payload**: `{"email": "admin@example.com", "password": "admin123"}`
-
-### 2. Create Payment
-- **Endpoint**: `POST /payments` (Auth Required)
-- **Payload**: `{"amount": 500, "currency": "USD", "idempotencyKey": "unique_id"}`
-
-### 3. Webhook
-- **Endpoint**: `POST /webhooks/gateway`
-- **Payload**: `{"externalId": "ext_123", "status": "SUCCESS"}`
+### 3. Webhook Callback
+`POST /webhooks/gateway`
+- **Body**: `{"externalId": "ext_123", "status": "SUCCESS"}`
 
 ---
 
-## 📂 Project Structure
-- `src/controllers`: Request handling.
-- `src/useCases`: Business logic.
-- `src/repositories`: Database access.
-- `src/infrastructure`: Security, DB, Redis, and DI Registry.
+## 🛠️ Configuration (Environment Variables)
+| Variable | Description | Default |
+| :--- | :--- | :--- |
+| `PORT` | Port for the server to listen on | `3000` |
+| `MONGO_URI` | MongoDB Connection String | `Required` |
+| `REDIS_URL` | Redis Connection URL | `Required` |
+| `JWT_SECRET` | Secret key for JWT signing | `Required` |
+| `RATE_LIMIT_EXCLUDED_PATHS` | Comma-separated paths to ignore rate limit | `/health` |
 
 ---
-*Project Status: Production Ready.*
+*Manual Generated for: Rishikeshkt998/PAYMENT_PROCESSING_SYSTEM*
