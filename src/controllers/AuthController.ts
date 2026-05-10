@@ -6,7 +6,7 @@ import jwt from 'jsonwebtoken';
  * Mirrors the brocamp-tool-v2 user access pattern.
  */
 export default class AuthController {
-  private secret = process.env.JWT_SECRET || 'fallback-secret';
+  private secret = process.env.JWT_SECRET || 'fallback-secret'; 
 
   /**
    * Simple method to generate a JWT token for testing.
